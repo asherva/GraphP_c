@@ -109,3 +109,50 @@ def process_site(site, token):
                                 "Table": tbl["name"],
                                 "Schema": tbl.get("schema", ""),
                                 "ConnectionType": tbl.get("connectionType", ""),
+                                "SQL": sql_text
+                            })
+                    else:
+                        rows.append({
+                            "Site": site_name,
+                            "Workbook": wb_name,
+                            "DataSource": ds_name,
+                            "Table": "",
+                            "Schema": "",
+                            "ConnectionType": "",
+                            "SQL": sql_text
+                        })
+    except Exception as e:
+        print(f"⚠️ שגיאה בסריקת האתר {site_name}: {e}")
+        rows.append({
+            "Site": site_name,
+            "Workbook": "ERROR",
+            "DataSource": "",
+            "Table": "",
+            "Schema": "",
+            "ConnectionType": "",
+            "SQL": f"שגיאה: {e}"
+        })
+    return rows
+
+# ===== הרצה ראשית =====
+if __name__ == "__main__":
+    try:
+        # בדיקות לפני ריצה
+        token, default_site_id, user_id = test_rest_api()
+        test_metadata_api(token, default_site_id)
+
+        # סריקה מלאה
+        sites = get_sites(token)
+        all_rows = []
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_site = {executor.submit(process_site, site, token): site for site in sites}
+            for future in as_completed(future_to_site):
+                all_rows.extend(future.result())
+
+        # שמירה לפלט
+        df = pd.DataFrame(all_rows)
+        df.to_excel("tableau_all_sites_sql_metadata.xlsx", index=False)
+        print("✅ הקובץ 'tableau_all_sites_sql_metadata.xlsx' נוצר בהצלחה.")
+
+    except Exception as e:
+        print(f"❌ הבדיקה נכשלה: {e}")

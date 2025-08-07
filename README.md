@@ -1,66 +1,72 @@
 import requests
-import json
 import urllib3
+import json
+import sys
 
-# עקיפת בדיקות SSL
+# 🔒 עקיפת אזהרות SSL (לסביבות בדיקה בלבד)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ========== הגדרות ==========
-TABLEAU_SERVER = "https://your-server-address"  # כולל https
-API_VERSION = "2023.1"  # עדכן לגרסה שלך
-SITE = ""  # השאר ריק אם זה Default site
+SERVER = "https://your-tableau-server"  # כולל https
+VERSION = "2023.1"                      # בדוק ב-/api/versions
+SITE = ""                               # השאר ריק אם default site
 
-# בחר אחת מהאפשרויות:
-USE_TOKEN = False
+USE_TOKEN = True                        # True = שימוש ב-PAT, False = משתמש/סיסמה
 
-# אם משתמש בסיסמה:
-USERNAME = "your_username"
-PASSWORD = "your_password"
+# התחברות עם טוקן
+TOKEN_NAME = "your-token-name"
+TOKEN_SECRET = "your-token-secret"
 
-# אם משתמש בטוקן:
-TOKEN_NAME = "your_token_name"
-TOKEN_SECRET = "your_token_secret"
+# התחברות עם שם משתמש/סיסמה (אם לא משתמש ב-TOKEN)
+USERNAME = "your-username"
+PASSWORD = "your-password"
 
 # ========== התחברות ==========
 def signin():
-    url = f"{TABLEAU_SERVER}/api/{API_VERSION}/auth/signin"
+    print("🔐 מתחבר לשרת Tableau...")
+    url = f"{SERVER}/api/{VERSION}/auth/signin"
 
     if USE_TOKEN:
-        payload = {
-            "credentials": {
-                "personalAccessTokenName": TOKEN_NAME,
-                "personalAccessTokenSecret": TOKEN_SECRET,
-                "site": {"contentUrl": SITE}
-            }
+        credentials = {
+            "personalAccessTokenName": TOKEN_NAME,
+            "personalAccessTokenSecret": TOKEN_SECRET,
+            "site": {"contentUrl": SITE}
         }
     else:
-        payload = {
-            "credentials": {
-                "name": USERNAME,
-                "password": PASSWORD,
-                "site": {"contentUrl": SITE}
-            }
+        credentials = {
+            "name": USERNAME,
+            "password": PASSWORD,
+            "site": {"contentUrl": SITE}
         }
 
     headers = {"Content-Type": "application/json"}
 
-    resp = requests.post(url, json=payload, headers=headers, verify=False)
+    try:
+        resp = requests.post(url, json={"credentials": credentials}, headers=headers, verify=False)
+    except requests.exceptions.RequestException as e:
+        sys.exit(f"❌ שגיאת רשת: {e}")
+
     if resp.status_code != 200:
-        raise Exception(f"❌ התחברות נכשלה: {resp.status_code}\n{resp.text}")
+        sys.exit(f"❌ התחברות נכשלה (HTTP {resp.status_code}):\n{resp.text}")
 
-    data = resp.json()
-    token = data["credentials"]["token"]
-    site_id = data["credentials"]["site"]["id"]
-    return token, site_id
+    try:
+        data = resp.json()
+        token = data["credentials"]["token"]
+        site_id = data["credentials"]["site"]["id"]
+        print("✅ התחברות הצליחה")
+        print(f"📎 site_id: {site_id}")
+        return token, site_id
+    except Exception as e:
+        sys.exit(f"❌ שגיאה בפענוח תגובה:\n{e}")
 
-# ========== שאילתה ==========
-def fetch_workbooks(token, site_id):
-    graphql_url = f"{TABLEAU_SERVER}/api/{API_VERSION}/sites/{site_id}/graphql"
+# ========== שאילתת GraphQL ==========
+def run_graphql(token, site_id):
+    print("\n📡 מריץ שאילתת GraphQL...")
+    url = f"{SERVER}/api/{VERSION}/sites/{site_id}/graphql"
     headers = {
         "X-Tableau-Auth": token,
         "Content-Type": "application/json"
     }
-
     query = {
         "query": """
         {
@@ -76,8 +82,8 @@ def fetch_workbooks(token, site_id):
               }
               upstreamTables {
                 name
-                fullName
                 schema
+                fullName
                 connectionType
               }
             }
@@ -86,40 +92,42 @@ def fetch_workbooks(token, site_id):
         """
     }
 
-    resp = requests.post(graphql_url, headers=headers, json=query, verify=False)
-    if resp.status_code != 200:
-        raise Exception(f"❌ GraphQL נכשלה: {resp.status_code}\n{resp.text}")
-
-    return resp.json()
-
-# ========== הרצה ==========
-def main():
     try:
-        print("🔐 מנסה להתחבר לשרת Tableau...")
-        token, site_id = signin()
-        print("✅ התחברות הצליחה")
+        resp = requests.post(url, headers=headers, json=query, verify=False)
+    except requests.exceptions.RequestException as e:
+        sys.exit(f"❌ שגיאת רשת בביצוע GraphQL:\n{e}")
 
-        print("📡 שולח שאילתת GraphQL...")
-        result = fetch_workbooks(token, site_id)
+    if resp.status_code != 200:
+        sys.exit(f"❌ GraphQL נכשל (HTTP {resp.status_code}):\n{resp.text}")
 
-        workbooks = result["data"]["workbooks"]
-        print(f"\n🔎 נמצאו {len(workbooks)} דוחות:\n")
-
-        for wb in workbooks:
-            print(f"📘 דוח: {wb['name']}")
-            for ds in wb.get("dataSources", []):
-                print(f"  🔗 מקור מידע: {ds['name']}")
-                for f in ds.get("fields", []):
-                    if f["isCalculated"]:
-                        print(f"    🧠 חישוב: {f['name']} = {f['formula']}")
-                    else:
-                        print(f"    📄 שדה: {f['name']} ({f['dataType']})")
-                for t in ds.get("upstreamTables", []):
-                    print(f"    🗂️ טבלה: {t['fullName']} (schema: {t['schema']})")
-            print("")
-
+    try:
+        return resp.json()
     except Exception as e:
-        print(f"\n[שגיאה] {e}")
+        sys.exit(f"❌ שגיאה בפענוח תגובת GraphQL:\n{e}")
+
+# ========== הדפסת תוצאה ==========
+def print_workbooks(data):
+    workbooks = data.get("data", {}).get("workbooks", [])
+    print(f"\n🔎 נמצאו {len(workbooks)} דוחות:\n")
+
+    for wb in workbooks:
+        print(f"📘 דוח: {wb['name']}")
+        for ds in wb.get("dataSources", []):
+            print(f"  🔗 מקור מידע: {ds['name']}")
+            for f in ds.get("fields", []):
+                if f["isCalculated"]:
+                    print(f"    🧠 חישוב: {f['name']} = {f['formula']}")
+                else:
+                    print(f"    📄 שדה: {f['name']} ({f['dataType']})")
+            for t in ds.get("upstreamTables", []):
+                print(f"    🗂️ טבלה: {t['fullName']} (schema: {t['schema']})")
+        print("")
+
+# ========== הרצת התוכנית ==========
+def main():
+    token, site_id = signin()
+    result = run_graphql(token, site_id)
+    print_workbooks(result)
 
 if __name__ == "__main__":
     main()

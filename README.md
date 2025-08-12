@@ -1,15 +1,17 @@
-import pyodbc
-import pandas as pd
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.vectorstores import Chroma
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
 
-def load_sales_data():
-    conn = pyodbc.connect(
-        'DRIVER={ODBC Driver 17 for SQL Server};'
-        'SERVER=YOUR_SERVER;'
-        'DATABASE=YOUR_DB;'
-        'UID=YOUR_USER;'
-        'PWD=YOUR_PASSWORD'
-    )
-    query = "SELECT * FROM SalesTable"
-    df = pd.read_sql(query, conn)
-    conn.close()
-    return df
+def prepare_vector_db(df):
+    # ממירים את ה־DataFrame לרשימת טקסטים
+    texts = [str(row.to_dict()) for _, row in df.iterrows()]
+    docs = [Document(page_content=text) for text in texts]
+
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    split_docs = splitter.split_documents(docs)
+
+    embeddings = OpenAIEmbeddings()  # או מודל embeddings פנימי
+    vector_db = Chroma.from_documents(split_docs, embeddings, persist_directory="./sales_db")
+    vector_db.persist()
+    return vector_db

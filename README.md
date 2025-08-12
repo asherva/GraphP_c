@@ -1,11 +1,30 @@
+# app_internal.py
+import streamlit as st
+import pyodbc
+import pandas as pd
 from sentence_transformers import SentenceTransformer
-from langchain.vectorstores import FAISS
+import faiss
 from langchain.docstore.document import Document
-import os
+from langchain_community.vectorstores import FAISS
+import numpy as np
+from gpt4all import GPT4All  # או החלף ל-Ollama אם תרצה
 
-# טען מודל מקומי ל־embeddings
-model = SentenceTransformer("all-MiniLM-L6-v2")
+# --- טעינת נתונים מ-MSSQL ---
+def load_sales_table():
+    conn_str = (
+        "DRIVER={ODBC Driver 18 for SQL Server};"
+        "SERVER=YOUR_SERVER\\INSTANCE;"
+        "DATABASE=SalesDB;"
+        "Trusted_Connection=yes;"
+        "TrustServerCertificate=yes;"
+    )
+    conn = pyodbc.connect(conn_str)
+    query = "SELECT TOP 10000 * FROM SalesTable"  # החלף לשם הטבלה שלך
+    df = pd.read_sql(query, conn)
+    conn.close()
+    return df
 
+# --- יצירת Vector Store ---
 def df_to_docs(df):
     docs = []
     for _, row in df.iterrows():
@@ -13,39 +32,51 @@ def df_to_docs(df):
         docs.append(Document(page_content=text))
     return docs
 
-docs = df_to_docs(sales_df)
-texts = [d.page_content for d in docs]
+def build_faiss_index(docs, model):
+    texts = [d.page_content for d in docs]
+    embeddings = model.encode(texts, show_progress_bar=True)
+    dim = embeddings.shape[1]
+    index = faiss.IndexFlatL2(dim)
+    index.add(np.array(embeddings).astype("float32"))
+    return index
 
-# צור embeddings
-embeddings = model.encode(texts, show_progress_bar=True)
+# --- שאילת LLM מקומי (GPT4All) ---
+def query_gpt4all(llm, question, context):
+    prompt = f"""בהתבסס על המידע הבא:
+{context}
 
-# בנה FAISS
-import faiss
-dim = embeddings.shape[1]
-index = faiss.IndexFlatL2(dim)
-index.add(embeddings)
+ענה על השאלה:
+{question}
+"""
+    response = llm.prompt(prompt)
+    return response
 
-vectorstore = FAISS(embedding_function=None, index=index, docs=docs)        parts = [f"{col}: {row[col]}" for col in text_cols if pd.notnull(row.get(col))]
-        content = " | ".join(parts)
-        docs.append(Document(page_content=content, metadata=row.to_dict()))
-    return docs
+# --- הממשק ---
+st.title("💼 צ'אט עסקי פנימי - MSSQL + LLM מקומי")
 
-# יצירת embeddings - אפשר לבחור OpenAI או local
-class Embedder:
-    def __init__(self, cfg):
-        self.cfg = cfg
-        if cfg["openai"].get("use_openai", True):
-            os.environ[cfg["openai"]["api_key_env"]] = os.getenv(cfg["openai"]["api_key_env"], "")
-            self.emb = OpenAIEmbeddings(model=cfg["openai"].get("embedding_model", "text-embedding-3-small"))
-            self.use_openai = True
-        else:
-            self.use_openai = False
-            model_name = cfg.get("sentence_transformer_model", "all-MiniLM-L6-v2")
-            self.st = SentenceTransformer(model_name)
+@st.cache_data(ttl=3600)
+def prepare_data():
+    df = load_sales_table()
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    docs = df_to_docs(df)
+    index = build_faiss_index(docs, model)
+    return df, docs, model, index
 
-    def embed_texts(self, texts):
-        if self.use_openai:
-            return self.emb.embed_documents(texts)
+df, docs, model, index = prepare_data()
+st.write(f"טעונים {len(df)} שורות נתונים.")
+
+llm = GPT4All("mistral-7b-instruct.Q4_0.bin")  # ודא שהמודל קיים במחשב שלך
+
+question = st.text_input("כתוב שאלה עסקית:")
+
+if question:
+    q_emb = model.encode([question]).astype("float32")
+    D, I = index.search(q_emb, 3)  # קח 3 תוצאות רלוונטיות
+    context = "\n\n".join([docs[i].page_content for i in I[0]])
+    with st.spinner("מחשב תשובה..."):
+        answer = query_gpt4all(llm, question, context)
+    st.markdown("### תשובה:")
+    st.write(answer)            return self.emb.embed_documents(texts)
         else:
             arr = self.st.encode(texts, show_progress_bar=False)
             return [list(x) for x in arr]

@@ -1,31 +1,31 @@
-# nlp.py
-import os
-import json
-import pandas as pd
-from typing import Optional
-
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.chains import RetrievalQA
-from langchain.chat_models import ChatOpenAI
-from langchain.prompts import PromptTemplate
-from langchain.document_loaders import DataFrameLoader
-from langchain.docstore.document import Document
-
-# אלטרנטיבה מקומית ל־embeddings
 from sentence_transformers import SentenceTransformer
-import numpy as np
+from langchain.vectorstores import FAISS
+from langchain.docstore.document import Document
+import os
 
-def load_config(path="config.json"):
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+# טען מודל מקומי ל־embeddings
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# המרה של DataFrame ל־Document
-def df_to_documents(df: pd.DataFrame, text_cols: list):
+def df_to_docs(df):
     docs = []
     for _, row in df.iterrows():
-        # בנה טקסט ענייני משדות (ניתן להתאים)
-        parts = [f"{col}: {row[col]}" for col in text_cols if pd.notnull(row.get(col))]
+        text = " | ".join([f"{col}: {row[col]}" for col in df.columns])
+        docs.append(Document(page_content=text))
+    return docs
+
+docs = df_to_docs(sales_df)
+texts = [d.page_content for d in docs]
+
+# צור embeddings
+embeddings = model.encode(texts, show_progress_bar=True)
+
+# בנה FAISS
+import faiss
+dim = embeddings.shape[1]
+index = faiss.IndexFlatL2(dim)
+index.add(embeddings)
+
+vectorstore = FAISS(embedding_function=None, index=index, docs=docs)        parts = [f"{col}: {row[col]}" for col in text_cols if pd.notnull(row.get(col))]
         content = " | ".join(parts)
         docs.append(Document(page_content=content, metadata=row.to_dict()))
     return docs

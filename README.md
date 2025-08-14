@@ -1,4 +1,9 @@
-""" Sales RAG (MSSQL + Ollama Embeddings + Ollama LLM) — 100% פנימי
+""" 
+pip install pandas pyodbc faiss-cpu requests
+ollama pull nomic-embed-text
+ollama pull llama3.1    # או mistral / llama3 / gemma
+python sales_rag_mssql_ollama.py
+Sales RAG (MSSQL + Ollama Embeddings + Ollama LLM) — 100% פנימי
 
 תלויות (התקנה חד-פעמית): pip install pandas pyodbc faiss-cpu requests
 

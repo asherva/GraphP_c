@@ -1,32 +1,104 @@
-import pyodbc
-import pandas as pd
-import faiss
-import numpy as np
-from sentence_transformers import SentenceTransformer
-import subprocess
+""" Sales RAG (MSSQL + Ollama Embeddings + Ollama LLM) — 100% פנימי
 
-# ===== הגדרות חיבור ל-MSSQL =====
-server = "SERVER_NAME"
-database = "DB_NAME"
-username = "USER"
-password = "PASS"
-table_name = "Sales"  # שם טבלת המכירות
+תלויות (התקנה חד-פעמית): pip install pandas pyodbc faiss-cpu requests
 
-# ===== חיבור למסד הנתונים וקריאת טבלה =====
-def load_sales_table():
-    conn_str = (
-        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-        f"SERVER={server};DATABASE={database};UID={username};PWD={password}"
-    )
-    conn = pyodbc.connect(conn_str)
-    query = f"SELECT * FROM {table_name}"
-    df = pd.read_sql(query, conn)
-    conn.close()
-    return df
+נדרש להתקין ולהריץ Ollama מקומית, ולהוריד את המודלים: ollama pull nomic-embed-text   # מודל Embedding ollama pull llama3.1           # או mistral / gemma / llama3
 
-# ===== בניית אינדקס FAISS =====
-def build_faiss_index(df):
-    model = SentenceTransformer("all-MiniLM-L6-v2")  # מודל embedding מקומי
+ברירת מחדל: שימוש ב-REST API המקומי של Ollama (http://localhost:11434) אין יציאה לאינטרנט מעבר לזה. """
+
+import os import json import time import struct from typing import List, Dict, Any, Tuple
+
+import pandas as pd import numpy as np import pyodbc import faiss import requests
+
+======================== הגדרות ========================
+
+חיבור למסד הנתונים (עדכן לערכים שלך)
+
+MSSQL_SERVER   = os.getenv("MSSQL_SERVER", "localhost\SQLEXPRESS") MSSQL_DATABASE = os.getenv("MSSQL_DATABASE", "SalesDB") MSSQL_USERNAME = os.getenv("MSSQL_USERNAME", "sa") MSSQL_PASSWORD = os.getenv("MSSQL_PASSWORD", "YourStrong!Passw0rd") MSSQL_TABLE    = os.getenv("MSSQL_TABLE", "Sales")
+
+Ollama
+
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434") EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")  # ממד וקטור אופייני: 768/1024 (תלוי מודל) LLM_MODEL   = os.getenv("LLM_MODEL", "llama3.1")            # או "mistral", "llama3", "gemma" וכו'
+
+קבצי מטמון/אינדקס (לא חובה)
+
+INDEX_DIR   = os.getenv("INDEX_DIR", "./rag_index") INDEX_FILE  = os.path.join(INDEX_DIR, "faiss.index") META_FILE   = os.path.join(INDEX_DIR, "meta.parquet") DIM_FILE    = os.path.join(INDEX_DIR, "dim.txt")
+
+os.makedirs(INDEX_DIR, exist_ok=True)
+
+======================== עזרי Ollama ========================
+
+def ollama_embeddings(texts: List[str], model: str = EMBED_MODEL, timeout: int = 120) -> np.ndarray: """מבקש embedding עבור רשימת טקסטים מהשרת המקומי של Ollama. משתמש ב-POST /api/embeddings. מחזיר np.ndarray בצורה (N, D). """ vectors = [] url = f"{OLLAMA_HOST}/api/embeddings" for t in texts: payload = {"model": model, "prompt": t} r = requests.post(url, json=payload, timeout=timeout) r.raise_for_status() data = r.json() vec = np.array(data.get("embedding", []), dtype=np.float32) if vec.size == 0: raise RuntimeError("Ollama החזיר embedding ריק. ודא שהמודל תומך ב-embeddings.") vectors.append(vec) return np.vstack(vectors)
+
+def ollama_generate(prompt: str, model: str = LLM_MODEL, temperature: float = 0.1, timeout: int = 300) -> str: """יוצר תשובה מה-LLM המקומי ב-Ollama דרך /api/generate (non-stream).""" url = f"{OLLAMA_HOST}/api/generate" payload = { "model": model, "prompt": prompt, "options": { "temperature": temperature, }, "stream": False } r = requests.post(url, json=payload, timeout=timeout) r.raise_for_status() data = r.json() # הפורמט מחזיר 'response' עם הטקסט המלא כאשר stream=False return data.get("response", "").strip()
+
+======================== MSSQL ========================
+
+def load_sales_table() -> pd.DataFrame: conn_str = ( f"DRIVER={{ODBC Driver 17 for SQL Server}};" f"SERVER={MSSQL_SERVER};DATABASE={MSSQL_DATABASE};UID={MSSQL_USERNAME};PWD={MSSQL_PASSWORD}" ) with pyodbc.connect(conn_str) as conn: df = pd.read_sql(f"SELECT * FROM {MSSQL_TABLE}", conn) # ניקוי בסיסי לשמות עמודות df.columns = [c.strip().replace(" ", "_") for c in df.columns] return df
+
+======================== המרה לטקסטים ========================
+
+def row_to_text(row: pd.Series) -> str: # ניתן להתאים: לבחור עמודות מרכזיות בלבד, או לתרגם שמות לעברית return "; ".join(f"{col}: {row[col]}" for col in row.index)
+
+def df_to_texts(df: pd.DataFrame) -> List[str]: return [row_to_text(r) for _, r in df.iterrows()]
+
+======================== FAISS ========================
+
+def build_faiss(embeddings: np.ndarray) -> faiss.IndexFlatIP: # נשתמש ב-Inner Product עם vectors מנורמלים (יעיל לקוסיין) dim = embeddings.shape[1] index = faiss.IndexFlatIP(dim) return index
+
+def normalize_rows(x: np.ndarray) -> np.ndarray: norms = np.linalg.norm(x, axis=1, keepdims=True) + 1e-12 return x / norms
+
+def save_index(index: faiss.Index, df_meta: pd.DataFrame, dim: int): faiss.write_index(index, INDEX_FILE) df_meta.to_parquet(META_FILE, index=False) with open(DIM_FILE, "w", encoding="utf-8") as f: f.write(str(dim))
+
+def load_index() -> Tuple[faiss.Index, pd.DataFrame, int]: index = faiss.read_index(INDEX_FILE) df_meta = pd.read_parquet(META_FILE) with open(DIM_FILE, "r", encoding="utf-8") as f: dim = int(f.read().strip()) return index, df_meta, dim
+
+======================== RAG ========================
+
+def ensure_index(df: pd.DataFrame, force_rebuild: bool = False) -> Tuple[faiss.Index, pd.DataFrame, int]: """בונה או טוען אינדקס: ממיר את השורות לטקסטים, מפיק embeddings ב-Ollama, ומאחסן ב-FAISS. מחזיר (index, df_meta, dim). """ if (not force_rebuild) and os.path.exists(INDEX_FILE) and os.path.exists(META_FILE) and os.path.exists(DIM_FILE): try: idx, meta, dim = load_index() return idx, meta, dim except Exception: pass
+
+texts = df_to_texts(df)
+print(f"יוצר embeddings ל-{len(texts)} שורות... (יכול לקחת זמן בפעם הראשונה)")
+embs = ollama_embeddings(texts, EMBED_MODEL)  # צורה (N, D)
+embs = normalize_rows(embs).astype(np.float32)
+
+index = build_faiss(embs)
+index.add(embs)
+
+# meta נשמור: אינדקס-שורה מקורי + טקסט המקור (לא חובה לשמור הכל)
+meta = pd.DataFrame({
+    "row_id": np.arange(len(df), dtype=np.int32),
+    "text": texts
+})
+
+save_index(index, meta, embs.shape[1])
+return index, meta, embs.shape[1]
+
+def search_similar(query: str, index: faiss.Index, df_meta: pd.DataFrame, top_k: int = 5) -> List[Dict[str, Any]]: q_emb = ollama_embeddings([query], EMBED_MODEL)  # (1, D) q_emb = normalize_rows(q_emb).astype(np.float32) D, I = index.search(q_emb, top_k)  # D: similarities, I: indices results = [] for score, idx in zip(D[0], I[0]): if idx == -1: continue results.append({ "score": float(score), "row_id": int(df_meta.loc[idx, "row_id"]), "text": df_meta.loc[idx, "text"], }) return results
+
+def build_prompt(query: str, hits: List[Dict[str, Any]]) -> str: ctx = "\n".join(f"[DOC {i+1}] {h['text']}" for i, h in enumerate(hits)) prompt = ( "את/ה עוזר/ת ניתוח מכירות פנימי/ת. \n" "ענה/י בעברית, מדויק, תמציתי כשאפשר, והצג/י חישובים אם רלוונטי. \n" "הסתמך/י אך ורק על ההקשר הבא: \n" f"{ctx}\n\n" f"שאלה: {query}\n" "תשובה:" ) return prompt
+
+def answer_question(query: str, index: faiss.Index, df_meta: pd.DataFrame, top_k: int = 6) -> Dict[str, Any]: hits = search_similar(query, index, df_meta, top_k=top_k) prompt = build_prompt(query, hits) answer = ollama_generate(prompt, model=LLM_MODEL) return {"answer": answer, "evidence": hits}
+
+======================== CLI ========================
+
+def main(): print("📥 טוען טבלה מ-MSSQL...") df = load_sales_table() print(f"✅ נטענו {len(df)} שורות, {len(df.columns)} עמודות.")
+
+print("🏗️ בונה/טוען אינדקס FAISS מקומי...")
+index, df_meta, dim = ensure_index(df, force_rebuild=False)
+print(f"✅ אינדקס מוכן. dim={dim}, items={index.ntotal}")
+
+print("\nאפשר לשאול שאלות (כתוב 'exit' ליציאה):")
+while True:
+    q = input("\nשאלה: ").strip()
+    if q.lower() in ("exit", "quit"): break
+    out = answer_question(q, index, df_meta, top_k=6)
+    print("\n— תשובה —\n" + out["answer"]) 
+    print("\n(מסמכי הקשר):")
+    for i, h in enumerate(out["evidence"], 1):
+        print(f" {i}. score={h['score']:.3f} | {h['text'][:160]}...")
+
+if name == "main": main()
+
     texts = df.astype(str).agg(" ".join, axis=1).tolist()
     embeddings = model.encode(texts, convert_to_numpy=True)
     dim = embeddings.shape[1]

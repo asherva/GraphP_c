@@ -1,33 +1,78 @@
-import os
-import pandas as pd
-import numpy as np
 import pyodbc
-from sentence_transformers import SentenceTransformer
+import pandas as pd
 import faiss
-from transformers import pipeline
+import numpy as np
+from sentence_transformers import SentenceTransformer
+import subprocess
 
 # ===== הגדרות חיבור ל-MSSQL =====
-MSSQL_SERVER = "SERVER_NAME"
-MSSQL_DATABASE = "DB_NAME"
-MSSQL_USERNAME = "USER"
-MSSQL_PASSWORD = "PASSWORD"
-MSSQL_TABLE    = "Sales"
+server = "SERVER_NAME"
+database = "DB_NAME"
+username = "USER"
+password = "PASS"
+table_name = "Sales"  # שם טבלת המכירות
 
-# ===== חיבור ל-MSSQL וטעינת הנתונים =====
-conn_str = (
-    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-    f"SERVER={MSSQL_SERVER};"
-    f"DATABASE={MSSQL_DATABASE};"
-    f"UID={MSSQL_USERNAME};"
-    f"PWD={MSSQL_PASSWORD}"
-)
-
-with pyodbc.connect(conn_str) as conn:
-    query = f"SELECT * FROM {MSSQL_TABLE}"
+# ===== חיבור למסד הנתונים וקריאת טבלה =====
+def load_sales_table():
+    conn_str = (
+        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+        f"SERVER={server};DATABASE={database};UID={username};PWD={password}"
+    )
+    conn = pyodbc.connect(conn_str)
+    query = f"SELECT * FROM {table_name}"
     df = pd.read_sql(query, conn)
+    conn.close()
+    return df
 
-df.columns = [c.strip().replace(" ", "_") for c in df.columns]
-print(f"נטענו {len(df)} שורות ו-{len(df.columns)} עמודות.")
+# ===== בניית אינדקס FAISS =====
+def build_faiss_index(df):
+    model = SentenceTransformer("all-MiniLM-L6-v2")  # מודל embedding מקומי
+    texts = df.astype(str).agg(" ".join, axis=1).tolist()
+    embeddings = model.encode(texts, convert_to_numpy=True)
+    dim = embeddings.shape[1]
+    index = faiss.IndexFlatL2(dim)
+    index.add(embeddings)
+    return index, texts, model
+
+# ===== חיפוש בטבלה =====
+def search(query, index, texts, model, top_k=5):
+    query_emb = model.encode([query], convert_to_numpy=True)
+    distances, indices = index.search(query_emb, top_k)
+    return [texts[i] for i in indices[0]]
+
+# ===== שליחת שאלה ל-Ollama =====
+def ollama_generate(prompt, model="mistral"):
+    cmd = ["ollama", "run", model]
+    process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    out, err = process.communicate(input=prompt)
+    return out.strip()
+
+# ===== פונקציה לשאלות =====
+def answer_question(query, index, texts, model):
+    results = search(query, index, texts, model)
+    context = "\n".join(results)
+    prompt = (
+        "הנך עוזר חכם לניתוח נתוני מכירות. "
+        "השתמש אך ורק בנתונים הבאים כדי לענות:\n"
+        f"{context}\n\n"
+        f"שאלה: {query}\n"
+        "תשובה:"
+    )
+    return ollama_generate(prompt, model="mistral")  # אפשר להחליף ל-llama3
+
+# ===== הרצה =====
+if __name__ == "__main__":
+    print("📥 טוען את טבלת המכירות...")
+    df = load_sales_table()
+    index, texts, emb_model = build_faiss_index(df)
+    print("✅ המערכת מוכנה. אפשר לשאול שאלות!")
+
+    while True:
+        q = input("\nהכנס שאלה (או 'exit' ליציאה): ")
+        if q.lower() == "exit":
+            break
+        answer = answer_question(q, index, texts, emb_model)
+        print("\n💡 תשובה:", answer)print(f"נטענו {len(df)} שורות ו-{len(df.columns)} עמודות.")
 
 # ===== המרת שורות לטקסטים =====
 def row_to_text(row):

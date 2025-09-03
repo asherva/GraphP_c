@@ -1,0 +1,2 @@
+pip install huggingface_hub
+huggingface-cli download sentence-transformers/all-MiniLM-L6-v2 --local-dir ./models/all-MiniLM-L6-v2

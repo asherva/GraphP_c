@@ -1,14 +1,13 @@
-# שרת מרוחק
-$server = "SERVER2"
+# רשימת שרתים
+$servers = "SERVER1","SERVER2","SERVER3"
 
-# הפקודה שתרוץ בשרת המרוחק
-$results = Invoke-Command -ComputerName $server -ScriptBlock {
-    Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:' OR DeviceID='D:'" |
-    Select-Object DeviceID,
-        @{Name='Free(GB)';Expression={[math]::Round($_.FreeSpace/1GB,2)}},
-        @{Name='Total(GB)';Expression={[math]::Round($_.Size/1GB,2)}},
-        @{Name='FreePercent';Expression={[math]::Round(($_.FreeSpace/$_.Size)*100,2)}}
+# תוצאות לכל השרתים
+$results = foreach ($s in $servers) {
+    Get-CimInstance -ComputerName $s -ClassName Win32_LogicalDisk -Filter "DriveType=3" |
+    Select-Object @{Name='Server';Expression={$s}},
+                  @{Name='Drive';Expression={$_.DeviceID}},
+                  @{Name='FreePercent';Expression={[math]::Round(($_.FreeSpace/$_.Size)*100,2)}}
 }
 
-# שמירה לקובץ מקומי בשרת 1
-$results | Export-Csv -Path "C:\Reports\DiskSpace_SERVER2.csv" -NoTypeInformation -Encoding UTF8
+# שמירה לקובץ אחד
+$results | Export-Csv -Path "C:\Reports\DiskFreeSummary.csv" -NoTypeInformation -Encoding UTF8

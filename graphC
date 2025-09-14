@@ -1,40 +1,11 @@
-import requests
-import pandas as pd
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-# ===== הגדרות התחברות =====
-SERVER = "https://your-tableau-server"
-USERNAME = "your-username"
-PASSWORD = "your-password"
-API_VERSION = "3.22"  # גרסת API של השרת שלך
-MAX_WORKERS = 10  # כמה חיבורים במקביל
-
-# ===== ביטול בדיקת SSL והשתקת אזהרות =====
-requests.packages.urllib3.disable_warnings()
-VERIFY_SSL = False  # תמיד False כדי לעקוף את הבדיקה
-
-# ===== פונקציות =====
-def signin():
-    url = f"{SERVER}/api/{API_VERSION}/auth/signin"
-    payload = {
-        "credentials": {
-            "name": USERNAME,
-            "password": PASSWORD,
-            "site": {"contentUrl": ""}
-        }
-    }
-    r = requests.post(url, json=payload, verify=VERIFY_SSL)
-    r.raise_for_status()
-    res = r.json()["credentials"]
-    return res["token"], res["site"]["id"], res["user"]["id"]
-
-def get_sites(token):
-    url = f"{SERVER}/api/{API_VERSION}/sites?pageSize=1000"
-    headers = {"X-Tableau-Auth": token}
-    r = requests.get(url, headers=headers, verify=VERIFY_SSL)
-    r.raise_for_status()
-    return r.json()["sites"]["site"]
-
+# בדיקת דיסק C ו-D על שרת מרוחק בשם SERVER01
+Invoke-Command -ComputerName SERVER01 -ScriptBlock {
+    Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:' OR DeviceID='D:'" |
+    Select-Object DeviceID,
+        @{Name='Free(GB)';Expression={[math]::Round($_.FreeSpace/1GB,2)}},
+        @{Name='Total(GB)';Expression={[math]::Round($_.Size/1GB,2)}},
+        @{Name='FreePercent';Expression={[math]::Round(($_.FreeSpace/$_.Size)*100,2)}}
+}
 def graphql_query(token, site_id, query):
     url = f"{SERVER}/api/metadata/graphql"
     headers = {

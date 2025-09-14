@@ -3,8 +3,9 @@ $servers = "SERVER1","SERVER2","SERVER3"
 
 # תוצאות לכל השרתים
 $results = foreach ($s in $servers) {
-    Get-CimInstance -ComputerName $s -ClassName Win32_LogicalDisk -Filter "DriveType=3" |
-    Select-Object @{Name='Server';Expression={$s}},
+    Get-CimInstance -ComputerName $s -ClassName Win32_LogicalDisk -Filter "DeviceID='C:' OR DeviceID='D:'" |
+    Select-Object @{Name='Date';Expression={(Get-Date -Format "yyyy-MM-dd HH:mm:ss")}},
+                  @{Name='Server';Expression={$s}},
                   @{Name='Drive';Expression={$_.DeviceID}},
                   @{Name='FreePercent';Expression={[math]::Round(($_.FreeSpace/$_.Size)*100,2)}}
 }

@@ -1,10 +1,30 @@
+-- משתנה לאחוז מקום פנוי
 DECLARE @FreePercent DECIMAL(5,2);
 
-SELECT TOP 1 @FreePercent = FreePercent
-FROM OPENROWSET(
-    BULK 'C:\Reports\DiskFreeSummary.csv',
-    FORMAT = 'CSV',
-    FIRSTROW = 2
-) AS t;
+-- יצירת טבלה זמנית לטעינת הקובץ
+CREATE TABLE #DiskFree (
+    DateRun     NVARCHAR(30),
+    Server      NVARCHAR(100),
+    Drive       NVARCHAR(10),
+    FreePercent DECIMAL(5,2)
+);
 
-PRINT @FreePercent;
+-- טעינת קובץ CSV לטבלה הזמנית
+BULK INSERT #DiskFree
+FROM 'C:\Reports\DiskFreeSummary.csv'
+WITH (
+    FIRSTROW = 2,              -- לדלג על כותרת
+    FIELDTERMINATOR = ',',      -- מפריד עמודות
+    ROWTERMINATOR = '\n',      
+    CODEPAGE = '65001'          -- תמיכה ב-UTF8
+);
+
+-- שליפת אחוז המקום הפנוי לכונן C של SERVER1
+SELECT TOP 1 @FreePercent = FreePercent
+FROM #DiskFree
+WHERE Server = 'SERVER1' AND Drive = 'C:';
+
+PRINT 'Free space percent for SERVER1 C: = ' + CAST(@FreePercent AS VARCHAR);
+
+-- מחיקת הטבלה הזמנית
+DROP TABLE #DiskFree;

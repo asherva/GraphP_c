@@ -1,14 +1,10 @@
-# רשימת שרתים
-$servers = "SERVER1","SERVER2","SERVER3"
+DECLARE @FreePercent DECIMAL(5,2);
 
-# תוצאות לכל השרתים
-$results = foreach ($s in $servers) {
-    Get-CimInstance -ComputerName $s -ClassName Win32_LogicalDisk -Filter "DeviceID='C:' OR DeviceID='D:'" |
-    Select-Object @{Name='Date';Expression={(Get-Date -Format "yyyy-MM-dd HH:mm:ss")}},
-                  @{Name='Server';Expression={$s}},
-                  @{Name='Drive';Expression={$_.DeviceID}},
-                  @{Name='FreePercent';Expression={[math]::Round(($_.FreeSpace/$_.Size)*100,2)}}
-}
+SELECT TOP 1 @FreePercent = FreePercent
+FROM OPENROWSET(
+    BULK 'C:\Reports\DiskFreeSummary.csv',
+    FORMAT = 'CSV',
+    FIRSTROW = 2
+) AS t;
 
-# שמירה לקובץ אחד
-$results | Export-Csv -Path "C:\Reports\DiskFreeSummary.csv" -NoTypeInformation -Encoding UTF8
+PRINT @FreePercent;

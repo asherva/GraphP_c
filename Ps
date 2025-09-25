@@ -3,7 +3,7 @@ param(
     [switch]$Loop    # ניטור מתמשך
 )
 
-# קידוד למסך וללוג
+# קידוד למסוף וללוג
 chcp 65001
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -18,7 +18,8 @@ $Global:PortConflictDetails  = @()
 function Get-HyperPorts {
     try {
         $hyper = Get-Process -Name "hyperd" -ErrorAction Stop
-        Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -eq $hyper.Id }
+        # בוחרים פורטים ייחודיים בלבד לפי מספר פורט
+        Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -eq $hyper.Id } | Select-Object -Unique LocalPort,OwningProcess
     }
     catch {
         return $null
@@ -40,47 +41,14 @@ function Run-Scan {
     $hyperPorts = Get-HyperPorts
     if ($hyperPorts) {
         foreach ($hp in $hyperPorts) {
-            $owner = Get-PortOwner $hp.LocalPort
+            $ownerName = Get-PortOwner $hp.LocalPort
+            $attemptedBy = "hyperd.exe"
             $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-            
-            if ($owner -ne "hyperd") {
-                $msg = "$time ⚠ פורט $($hp.LocalPort) נתפס ע״י תהליך אחר: $owner"
-                Write-Host $msg -ForegroundColor Red
-                Add-Content -Path $logFile -Value $msg -Encoding UTF8
 
-                # סימון התנגשות בפרמטר גלובלי
-                $Global:PortConflictDetected = $true
-                $conflict = [PSCustomObject]@{
-                    Time  = $time
-                    Port  = $hp.LocalPort
-                    Owner = $owner
-                }
-                $Global:PortConflictDetails += $conflict
-            }
-            else {
-                $msg = "$time ✔ Hyper מאזין בהצלחה על פורט $($hp.LocalPort)"
-                Write-Host $msg -ForegroundColor Green
-                Add-Content -Path $logFile -Value $msg -Encoding UTF8
-            }
-        }
-    }
-    else {
-        $msg = "$(Get-Date -Format 'HH:mm:ss') ❌ Hyper לא רץ כרגע"
-        Write-Host $msg -ForegroundColor Yellow
-        Add-Content -Path $logFile -Value $msg -Encoding UTF8
-    }
-}
+            # בדיקה אם הפורט כבר נרשם – מניעת כפילויות
+            if (-not ($Global:PortConflictDetails.Port -contains $hp.LocalPort)) {
 
-# --- הפעלה לפי פרמטרים ---
-if ($Once) {
-    Run-Scan
-}
-elseif ($Loop) {
-    while ($true) {
-        Run-Scan
-        Start-Sleep -Seconds 5
-    }
-}
-else {
-    Write-Host "⚠ יש לבחור פרמטר: -Once או -Loop" -ForegroundColor Yellow
-}
+                if ($ownerName -ne $attemptedBy) {
+                    $msg = "$time ⚠ פורט $($hp.LocalPort) נתפס ע״י $ownerName (מנסה: $attemptedBy)"
+                    Write-Host $msg -ForegroundColor Red
+                    Add-Content -Pa

@@ -1,4 +1,82 @@
-# מחפש אירועים של שגיאות TCP
-Get-WinEvent -LogName System |
-    Where-Object { $_.Message -like "*address already in use*" } |
-    Select-Object TimeCreated, ProviderName, Id, Message
+param(
+    [switch]$Once,   # סריקה חד פעמית
+    [switch]$Loop    # ניטור מתמשך
+)
+$Once = $true
+
+# קובץ לוג
+$logFile = "C:\Logs\HyperPortMonitor.log"
+
+# פרמטרים גלובליים לשימוש פנימי
+$Global:PortConflictDetected = $false
+$Global:PortConflictDetails  = @()
+
+# פונקציה שמחזירה את כל הפורטים ש-Hyper מאזין עליהם
+function Get-HyperPorts {
+    try {
+        $hyper = Get-Process -Name "hyperd" -ErrorAction Stop
+        Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -eq $hyper.Id }
+    }
+    catch {
+        return $null
+    }
+}
+
+# פונקציה שמחזירה מי מחזיק פורט מסוים
+function Get-PortOwner($port) {
+    $conn = Get-NetTCPConnection -State Listen | Where-Object { $_.LocalPort -eq $port }
+    if ($conn) {
+        $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+        return $proc.ProcessName
+    }
+    return $null
+}
+
+# פונקציה אחת לסריקה (משתמשים בה גם ב-Once וגם ב-Loop)
+function Run-Scan {
+    $hyperPorts = Get-HyperPorts
+    if ($hyperPorts) {
+        foreach ($hp in $hyperPorts) {
+            $owner = Get-PortOwner $hp.LocalPort
+            $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            
+            if ($owner -ne "hyperd") {
+                $msg = "$time ⚠ פורט $($hp.LocalPort) נתפס ע״י תהליך אחר: $owner"
+                Write-Host $msg -ForegroundColor Red
+                Add-Content -Path $logFile -Value $msg
+
+                # סימון התנגשות בפרמטר גלובלי
+                $Global:PortConflictDetected = $true
+                $conflict = [PSCustomObject]@{
+                    Time  = $time
+                    Port  = $hp.LocalPort
+                    Owner = $owner
+                }
+                $Global:PortConflictDetails += $conflict
+            }
+            else {
+                $msg = "$time ✔ Hyper מאזין בהצלחה על פורט $($hp.LocalPort)"
+                Write-Host $msg -ForegroundColor Green
+                Add-Content -Path $logFile -Value $msg
+            }
+        }
+    }
+    else {
+        Write-Host "$(Get-Date -Format 'HH:mm:ss') ❌ Hyper לא רץ כרגע"
+    }
+}
+
+
+# --- הפעלה לפי פרמטרים ---
+if ($Once) {
+    Run-Scan
+}
+elseif ($Loop) {
+    while ($true) {
+        Run-Scan
+        Start-Sleep -Seconds 5
+    }
+}
+else {
+    Write-Host "⚠ יש לבחור פרמטר: -Once או -Loop" -ForegroundColor Yellow
+}

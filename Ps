@@ -1,52 +1,9 @@
-param(
-    [int]$Port,                   # הפורט לבדיקה
-    [switch]$Release              # אם רוצים לשחרר את הפורט אוטומטית
-)
+# מזהים את PID של Hyper
+$hyper = Get-Process -Name "hyperd" -ErrorAction SilentlyContinue
 
-# קידוד למסוף בעברית
-chcp 65001
-$OutputEncoding = [System.Text.Encoding]::UTF8
-
-function Check-Port {
-    param([int]$Port)
-
-    $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-    if ($conn) {
-        $pid = $conn.OwningProcess
-        $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
-        $procName = if ($proc) { $proc.ProcessName } else { "לא זוהה" }
-
-        Write-Host "⚠ פורט $Port תפוס ע״י PID $pid ($procName)"
-
-        return @{PID=$pid; ProcessName=$procName}
-    }
-    else {
-        Write-Host "✔ הפורט $Port פנוי כרגע"
-        return $null
-    }
-}
-
-function Release-Port {
-    param([int]$PID, [string]$ProcName)
-
-    # בדיקה ידנית לפני kill
-    $confirm = Read-Host "האם לשחרר את הפורט ע״י עצירת $ProcName (PID $PID)? (Y/N)"
-    if ($confirm -eq "Y" -or $confirm -eq "y") {
-        try {
-            Stop-Process -Id $PID -Force
-            Write-Host "✅ הפורט שוחרר בהצלחה"
-        } catch {
-            Write-Host "❌ נכשל בשחרור הפורט: $_"
-        }
-    }
-    else {
-        Write-Host "הפורט לא שוחרר"
-    }
-}
-
-# --- ריצה ראשית ---
-$result = Check-Port -Port $Port
-
-if ($Release -and $result) {
-    Release-Port -PID $result.PID -ProcName $result.ProcessName
+if ($hyper) {
+    # כל הקונקשנים שה־Hyper מאזין עליהם
+    Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -eq $hyper.Id } | Select-Object LocalPort, State
+} else {
+    Write-Host "Hyper לא רץ כרגע"
 }

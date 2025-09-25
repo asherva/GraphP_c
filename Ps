@@ -2,7 +2,10 @@ param(
     [switch]$Once,   # סריקה חד פעמית
     [switch]$Loop    # ניטור מתמשך
 )
-$Once = $true
+
+# קידוד למסך וללוג
+chcp 65001
+$OutputEncoding = [System.Text.Encoding]::UTF8
 
 # קובץ לוג
 $logFile = "C:\Logs\HyperPortMonitor.log"
@@ -32,7 +35,7 @@ function Get-PortOwner($port) {
     return $null
 }
 
-# פונקציה אחת לסריקה (משתמשים בה גם ב-Once וגם ב-Loop)
+# פונקציה אחת לסריקה
 function Run-Scan {
     $hyperPorts = Get-HyperPorts
     if ($hyperPorts) {
@@ -43,7 +46,7 @@ function Run-Scan {
             if ($owner -ne "hyperd") {
                 $msg = "$time ⚠ פורט $($hp.LocalPort) נתפס ע״י תהליך אחר: $owner"
                 Write-Host $msg -ForegroundColor Red
-                Add-Content -Path $logFile -Value $msg
+                Add-Content -Path $logFile -Value $msg -Encoding UTF8
 
                 # סימון התנגשות בפרמטר גלובלי
                 $Global:PortConflictDetected = $true
@@ -57,15 +60,16 @@ function Run-Scan {
             else {
                 $msg = "$time ✔ Hyper מאזין בהצלחה על פורט $($hp.LocalPort)"
                 Write-Host $msg -ForegroundColor Green
-                Add-Content -Path $logFile -Value $msg
+                Add-Content -Path $logFile -Value $msg -Encoding UTF8
             }
         }
     }
     else {
-        Write-Host "$(Get-Date -Format 'HH:mm:ss') ❌ Hyper לא רץ כרגע"
+        $msg = "$(Get-Date -Format 'HH:mm:ss') ❌ Hyper לא רץ כרגע"
+        Write-Host $msg -ForegroundColor Yellow
+        Add-Content -Path $logFile -Value $msg -Encoding UTF8
     }
 }
-
 
 # --- הפעלה לפי פרמטרים ---
 if ($Once) {

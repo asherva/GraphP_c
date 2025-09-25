@@ -51,4 +51,43 @@ function Run-Scan {
                 if ($ownerName -ne $attemptedBy) {
                     $msg = "$time ⚠ פורט $($hp.LocalPort) נתפס ע״י $ownerName (מנסה: $attemptedBy)"
                     Write-Host $msg -ForegroundColor Red
-                    Add-Content -Pa
+                    Add-Content -Path $logFile -Value $msg -Encoding UTF8
+
+                    # סימון התנגשות בפרמטר גלובלי
+                    $Global:PortConflictDetected = $true
+                    $conflict = [PSCustomObject]@{
+                        Time        = $time
+                        Port        = $hp.LocalPort
+                        Owner       = $ownerName
+                        AttemptedBy = $attemptedBy
+                    }
+                    $Global:PortConflictDetails += $conflict
+                }
+                else {
+                    $msg = "$time ✔ Hyper מאזין בהצלחה על פורט $($hp.LocalPort)"
+                    Write-Host $msg -ForegroundColor Green
+                    Add-Content -Path $logFile -Value $msg -Encoding UTF8
+                }
+            }
+        }
+    }
+    else {
+        $msg = "$(Get-Date -Format 'HH:mm:ss') ❌ Hyper לא רץ כרגע"
+        Write-Host $msg -ForegroundColor Yellow
+        Add-Content -Path $logFile -Value $msg -Encoding UTF8
+    }
+}
+
+# --- הפעלה לפי פרמטרים ---
+if ($Once) {
+    Run-Scan
+}
+elseif ($Loop) {
+    while ($true) {
+        Run-Scan
+        Start-Sleep -Seconds 5
+    }
+}
+else {
+    Write-Host "⚠ יש לבחור פרמטר: -Once או -Loop" -ForegroundColor Yellow
+}

@@ -1,28 +1,4 @@
-param(
-    [Parameter(Mandatory=$true)]
-    [int]$Port
-)
-
-Write-Host "בודק מי מחזיק את הפורט $Port ...`n"
-
-# חיפוש חיבורי רשת לפורט
-$connections = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue
-
-if ($connections) {
-    foreach ($conn in $connections) {
-        $procId = $conn.OwningProcess
-        $proc   = Get-Process -Id $procId -ErrorAction SilentlyContinue
-
-        Write-Host "מצב: $($conn.State)"
-        Write-Host "Process ID: $procId"
-        if ($proc) {
-            Write-Host "תהליך: $($proc.ProcessName)"
-            if ($proc.Path) {
-                Write-Host "נתיב:  $($proc.Path)"
-            }
-        }
-        Write-Host "----------------------------"
-    }
-} else {
-    Write-Host "הפורט $Port לא בשימוש כרגע."
-}
+# מחפש אירועים של שגיאות TCP
+Get-WinEvent -LogName System |
+    Where-Object { $_.Message -like "*address already in use*" } |
+    Select-Object TimeCreated, ProviderName, Id, Message

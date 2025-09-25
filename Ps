@@ -1,63 +1,56 @@
-מה הסקריפט עושה
+#<
+✅ תכונות הסקריפט
 
-מתחבר לכל שרת ברשימת $RemoteComputers באמצעות PowerShell Remoting
+מזהה קובץ Hyper מהיום בלבד
 
-מוצא את קובץ הלוג האחרון של Hyper בכל שרת
+תואם לפורמט hyper_0_YYYY_MM_DD_hh_mm_ss.txt
 
-יוצר FileSystemWatcher לכל קובץ – תגובה כמעט מיידית לשורה חדשה
+מאפשר ניטור מספר שרתים מרוחקים במקביל
 
-כל פעם שמופיעה השגיאה "Address already in use":
+מגיב כמעט בזמן אמת ל‑Address already in use
 
-מציג הודעה בזמן אמת למסוף עם שם השרת
+שומר את ההתנגשות ל‑CSV מרכזי ופרמטר פנימי $Global:PortConflicts
 
-כותב ל־CSV מרכזי ($OutputLogFile)
-
-שומר בפרמטר פנימי $Global:PortConflicts
-
-רץ ברצף עד עצירה ידנית (Ctrl+C)
-
-יתרונות
-
-מאפשר ניטור מרוכז של מספר שרתים
-
-תגובה מהירה כמעט בזמן אמת לשגיאות
-
-תיעוד מלא לשימוש לניתוחים מאוחרים
-
-אין פגיעה בביצועי השרתים – קורא רק שורות חדשות
-
-ניתן להוסיף התראה (מייל/טלגרם) בקלות בפונקציה -Action של FileSystemWatcher
-
-
+מודפס התראה בזמן אמת למסוף
+>#
 
 param(
     [string[]]$RemoteComputers = @("Server1","Server2"),  # רשימת שרתים מרוחקים
-    [string]$RemoteLogFolder = "C$\ProgramData\Tableau\Tableau Server\data\tabsvc\logs\hyper",
+    [string]$RemoteLogFolder = "C:\ProgramData\Tableau\Tableau Server\data\tabsvc\logs\hyper",
     [string]$OutputLogFile = "C:\Temp\HyperPortConflicts_AllServers.csv"
 )
 
 # משתנה גלובלי לשמירת כל ההתנגשויות
 $Global:PortConflicts = @()
 
-# פונקציה לקבלת הקובץ האחרון בשרת מרוחק
+# פונקציה לקבלת הקובץ האחרון של Hyper מהיום בשרת מרוחק
 function Get-RemoteLatestLog {
     param($Computer, $Folder)
     $session = New-PSSession -ComputerName $Computer
-    $log = Invoke-Command -Session $session -ScriptBlock {
+    $logPath = Invoke-Command -Session $session -ScriptBlock {
         param($FolderRemote)
-        Get-ChildItem -LiteralPath $FolderRemote -Filter "hyper_0_*.txt" |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
+        $today = (Get-Date).Date
+        $log = Get-ChildItem -Path $FolderRemote -Filter "hyper_0_????_??_??_??_??_??.txt" |
+               Where-Object { $_.LastWriteTime.Date -eq $today } |
+               Sort-Object LastWriteTime -Descending |
+               Select-Object -First 1
+        return $log.FullName
     } -ArgumentList $Folder
     Remove-PSSession $session
-    return $log
+    return $logPath
 }
 
 # פונקציה לניטור Hyper על שרת מרוחק
 function Monitor-HyperRemote {
     param($Computer, $LogPath, $OutputFile)
     
-    Write-Host "🟢 ניטור Hyper בזמן אמת על $Computer: $($LogPath.Name)..."
+    if (-not $LogPath) {
+        Write-Host "❌ לא נמצא קובץ Hyper מהיום על $Computer"
+        return
+    }
+
+    $logFileName = Split-Path $LogPath -Leaf
+    Write-Host "🟢 ניטור Hyper בזמן אמת על $Computer: $logFileName ..."
 
     $session = New-PSSession -ComputerName $Computer
     Invoke-Command -Session $session -ScriptBlock {
@@ -93,15 +86,11 @@ function Monitor-HyperRemote {
 
         Write-Host "🟢 ממתין לאירועים... (Ctrl+C לעצירה)"
         while ($true) { Start-Sleep 1 }
-    } -ArgumentList $LogPath.FullName, $OutputFile
+    } -ArgumentList $LogPath, $OutputFile
 }
 
 # --- הפעלה עבור כל שרת ברשימה ---
 foreach ($server in $RemoteComputers) {
     $LatestLog = Get-RemoteLatestLog -Computer $server -Folder $RemoteLogFolder
-    if ($LatestLog) {
-        Monitor-HyperRemote -Computer $server -LogPath $LatestLog -OutputFile $OutputLogFile
-    } else {
-        Write-Host "❌ לא נמצא קובץ לוג Hyper בשרת $server"
-    }
+    Monitor-HyperRemote -Computer $server -LogPath $LatestLog -OutputFile $OutputLogFile
 }

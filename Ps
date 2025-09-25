@@ -13,6 +13,7 @@ $logFile = "C:\Logs\HyperPortMonitor.log"
 # פרמטרים גלובליים לשימוש פנימי
 $Global:PortConflictDetected = $false
 $Global:PortConflictDetails  = @()
+$Global:RunningExtracts      = @()
 
 # פונקציה שמחזירה את כל הפורטים ש-Hyper מאזין עליהם
 function Get-HyperPorts {
@@ -36,8 +37,33 @@ function Get-PortOwner($port) {
     return $null
 }
 
+# פונקציה שמזהה איזה extract/Job רץ כרגע
+function Get-RunningExtracts {
+    try {
+        $hyper = Get-Process -Name "hyperd" -ErrorAction Stop
+        $procInfo = Get-CimInstance Win32_Process -Filter "ProcessId=$($hyper.Id)"
+        $commandLine = $procInfo.CommandLine
+
+        if ($commandLine -match "\S+\.hyper") {
+            $extractName = $matches[0]
+        } else {
+            $extractName = "לא זוהה"
+        }
+
+        $Global:RunningExtracts += [PSCustomObject]@{
+            Time      = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            PID       = $hyper.Id
+            Extract   = $extractName
+        }
+    }
+    catch {
+        return
+    }
+}
+
 # פונקציה אחת לסריקה
 function Run-Scan {
+    Get-RunningExtracts
     $hyperPorts = Get-HyperPorts
     if ($hyperPorts) {
         foreach ($hp in $hyperPorts) {
@@ -45,11 +71,11 @@ function Run-Scan {
             $attemptedBy = "hyperd.exe"
             $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
-            # בדיקה אם הפורט כבר נרשם – מניעת כפילויות
+            # מניעת כפילויות
             if (-not ($Global:PortConflictDetails.Port -contains $hp.LocalPort)) {
 
                 if ($ownerName -ne $attemptedBy) {
-                    $msg = "$time ⚠ פורט $($hp.LocalPort) נתפס ע״י $ownerName (מנסה: $attemptedBy)"
+                    $msg = "$time ⚠ פורט $($hp.LocalPort) תפוס ע״י $ownerName (מנסה: $attemptedBy, Extract: $($Global:RunningExtracts[-1].Extract))"
                     Write-Host $msg -ForegroundColor Red
                     Add-Content -Path $logFile -Value $msg -Encoding UTF8
 
@@ -60,11 +86,12 @@ function Run-Scan {
                         Port        = $hp.LocalPort
                         Owner       = $ownerName
                         AttemptedBy = $attemptedBy
+                        Extract     = $Global:RunningExtracts[-1].Extract
                     }
                     $Global:PortConflictDetails += $conflict
                 }
                 else {
-                    $msg = "$time ✔ Hyper מאזין בהצלחה על פורט $($hp.LocalPort)"
+                    $msg = "$time ✔ Hyper מאזין בהצלחה על פורט $($hp.LocalPort) (Extract: $($Global:RunningExtracts[-1].Extract))"
                     Write-Host $msg -ForegroundColor Green
                     Add-Content -Path $logFile -Value $msg -Encoding UTF8
                 }
@@ -72,7 +99,7 @@ function Run-Scan {
         }
     }
     else {
-        $msg = "$(Get-Date -Format 'HH:mm:ss') ❌ Hyper לא רץ כרגע"
+        $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ❌ Hyper לא רץ כרגע"
         Write-Host $msg -ForegroundColor Yellow
         Add-Content -Path $logFile -Value $msg -Encoding UTF8
     }

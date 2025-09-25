@@ -13,7 +13,7 @@ function Get-RemoteLatestLog {
     try {
         $session = New-PSSession -ComputerName $Computer -ErrorAction Stop
     } catch {
-        Write-Host "❌ לא ניתן ליצור סשן לשרת $Computer: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "❌ לא ניתן ליצור סשן לשרת $($Computer): $($_.Exception.Message)" -ForegroundColor Red
         return $null
     }
 
@@ -28,7 +28,7 @@ function Get-RemoteLatestLog {
             if ($log) { return $log.FullName } else { return $null }
         } -ArgumentList $Folder
     } catch {
-        Write-Host "❌ שגיאה בקריאת קבצים בשרת $Computer: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "❌ שגיאה בקריאת קבצים בשרת $($Computer): $($_.Exception.Message)" -ForegroundColor Red
         Remove-PSSession $session
         return $null
     }
@@ -42,21 +42,24 @@ function Monitor-HyperRemote {
     param($Computer, $LogPath, $OutputFile)
 
     if (-not $LogPath) {
-        Write-Host "❌ לא נמצא קובץ Hyper מהיום על $Computer"
+        Write-Host "❌ לא נמצא קובץ Hyper מהיום על $($Computer)"
         return
     }
 
     $logFileName = Split-Path $LogPath -Leaf
-    Write-Host "🟢 מתחיל ניטור Hyper בזמן אמת על $Computer: $logFileName ..."
-
-    # יצירת סשן לשרת המרוחק
-    $session = New-PSSession -ComputerName $Computer
+    Write-Host "🟢 מתחיל ניטור Hyper בזמן אמת על $($Computer): $logFileName ..."
 
     # הפעלה במקביל עם Start-Job
     Start-Job -Name "Monitor_$Computer" -ScriptBlock {
-        param($Computer, $LogPath, $OutputFile)
+        param($ServerName, $LogPath, $OutputFile)
 
-        $session = New-PSSession -ComputerName $Computer
+        try {
+            $session = New-PSSession -ComputerName $ServerName -ErrorAction Stop
+        } catch {
+            Write-Host "❌ לא ניתן ליצור סשן בתוך Job לשרת $($ServerName): $($_.Exception.Message)" -ForegroundColor Red
+            return
+        }
+
         Invoke-Command -Session $session -ScriptBlock {
             param($FullPath)
             $fsw = New-Object System.IO.FileSystemWatcher

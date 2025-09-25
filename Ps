@@ -1,9 +1,54 @@
-# מזהים את PID של Hyper
-$hyper = Get-Process -Name "hyperd" -ErrorAction SilentlyContinue
+param(
+    [string]$LogPath = "C:\ProgramData\Tableau\Tableau Server\data\tabsvc\logs\hyper\hyperd.log"
+)
 
-if ($hyper) {
-    # כל הקונקשנים שה־Hyper מאזין עליהם
-    Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -eq $hyper.Id } | Select-Object LocalPort, State
-} else {
-    Write-Host "Hyper לא רץ כרגע"
+# קידוד למסוף בעברית
+chcp 65001
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
+# פרמטרים גלובליים
+$Global:PortConflicts = @()
+
+# פונקציה למעקב אחר שגיאות Address already in use
+function Monitor-HyperPortConflicts {
+    param([string]$LogFile)
+
+    if (-Not (Test-Path $LogFile)) {
+        Write-Host "❌ קובץ לוג Hyper לא נמצא: $LogFile"
+        return
+    }
+
+    Write-Host "🟢 מתחיל ניטור Hyper על שגיאות 'Address already in use'..."
+
+    Get-Content $LogFile -Wait | ForEach-Object {
+        $line = $_
+        if ($line -match "Address already in use") {
+            $time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+
+            # לנסות לחלץ PID ושם Extract אם מופיע ב-CommandLine
+            $hyperProcesses = Get-CimInstance Win32_Process | Where-Object { $_.Name -like "hyperd*" }
+            $extractName = "לא זוהה"
+            $pid = $null
+
+            foreach ($proc in $hyperProcesses) {
+                if ($proc.CommandLine -match "\S+\.hyper") {
+                    $extractName = $matches[0]
+                    $pid = $proc.ProcessId
+                    break
+                }
+            }
+
+            $msg = "$time ⚠ פורט תפוס בזמן אמת! PID: $pid, Extract: $extractName"
+            Write-Host $msg -ForegroundColor Red
+            $Global:PortConflicts += [PSCustomObject]@{
+                Time    = $time
+                PID     = $pid
+                Extract = $extractName
+                LogLine = $line
+            }
+        }
+    }
 }
+
+# --- הפעלה ---
+Monitor-HyperPortConflicts -LogFile $LogPath

@@ -1,0 +1,26 @@
+param(
+    [Parameter(Mandatory=$true)]
+    [int]$Port
+)
+
+Write-Host "בודק מי מחזיק את הפורט $Port ...`n"
+
+# חיפוש חיבורי רשת לפורט
+$connections = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue
+
+if ($connections) {
+    foreach ($conn in $connections) {
+        $pid = $conn.OwningProcess
+        $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+
+        Write-Host "מצב: $($conn.State)"
+        Write-Host "PID: $pid"
+        if ($proc) {
+            Write-Host "תהליך: $($proc.ProcessName)"
+            Write-Host "נתיב:  $($proc.Path)"
+        }
+        Write-Host "----------------------------"
+    }
+} else {
+    Write-Host "הפורט $Port לא בשימוש כרגע."
+}

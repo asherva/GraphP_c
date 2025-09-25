@@ -10,14 +10,16 @@ $connections = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContin
 
 if ($connections) {
     foreach ($conn in $connections) {
-        $pid = $conn.OwningProcess
-        $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+        $procId = $conn.OwningProcess
+        $proc   = Get-Process -Id $procId -ErrorAction SilentlyContinue
 
         Write-Host "מצב: $($conn.State)"
-        Write-Host "PID: $pid"
+        Write-Host "Process ID: $procId"
         if ($proc) {
             Write-Host "תהליך: $($proc.ProcessName)"
-            Write-Host "נתיב:  $($proc.Path)"
+            if ($proc.Path) {
+                Write-Host "נתיב:  $($proc.Path)"
+            }
         }
         Write-Host "----------------------------"
     }

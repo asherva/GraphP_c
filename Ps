@@ -1,120 +1,52 @@
 param(
-    [switch]$Once,   # סריקה חד פעמית
-    [switch]$Loop    # ניטור מתמשך
+    [int]$Port,                   # הפורט לבדיקה
+    [switch]$Release              # אם רוצים לשחרר את הפורט אוטומטית
 )
 
-# קידוד למסוף וללוג
+# קידוד למסוף בעברית
 chcp 65001
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-# קובץ לוג
-$logFile = "C:\Logs\HyperPortMonitor.log"
+function Check-Port {
+    param([int]$Port)
 
-# פרמטרים גלובליים לשימוש פנימי
-$Global:PortConflictDetected = $false
-$Global:PortConflictDetails  = @()
-$Global:RunningExtracts      = @()
+    $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    if ($conn) {
+        $pid = $conn.OwningProcess
+        $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+        $procName = if ($proc) { $proc.ProcessName } else { "לא זוהה" }
 
-# פונקציה שמחזירה את כל הפורטים ש-Hyper מאזין עליהם
-function Get-HyperPorts {
-    try {
-        $hyper = Get-Process -Name "hyperd" -ErrorAction Stop
-        # בוחרים פורטים ייחודיים בלבד לפי מספר פורט
-        Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -eq $hyper.Id } | Select-Object -Unique LocalPort,OwningProcess
+        Write-Host "⚠ פורט $Port תפוס ע״י PID $pid ($procName)"
+
+        return @{PID=$pid; ProcessName=$procName}
     }
-    catch {
+    else {
+        Write-Host "✔ הפורט $Port פנוי כרגע"
         return $null
     }
 }
 
-# פונקציה שמחזירה מי מחזיק פורט מסוים
-function Get-PortOwner($port) {
-    $conn = Get-NetTCPConnection -State Listen | Where-Object { $_.LocalPort -eq $port }
-    if ($conn) {
-        $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
-        return $proc.ProcessName
-    }
-    return $null
-}
+function Release-Port {
+    param([int]$PID, [string]$ProcName)
 
-# פונקציה שמזהה איזה extract/Job רץ כרגע
-function Get-RunningExtracts {
-    try {
-        $hyper = Get-Process -Name "hyperd" -ErrorAction Stop
-        $procInfo = Get-CimInstance Win32_Process -Filter "ProcessId=$($hyper.Id)"
-        $commandLine = $procInfo.CommandLine
-
-        if ($commandLine -match "\S+\.hyper") {
-            $extractName = $matches[0]
-        } else {
-            $extractName = "לא זוהה"
-        }
-
-        $Global:RunningExtracts += [PSCustomObject]@{
-            Time      = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-            PID       = $hyper.Id
-            Extract   = $extractName
-        }
-    }
-    catch {
-        return
-    }
-}
-
-# פונקציה אחת לסריקה
-function Run-Scan {
-    Get-RunningExtracts
-    $hyperPorts = Get-HyperPorts
-    if ($hyperPorts) {
-        foreach ($hp in $hyperPorts) {
-            $ownerName = Get-PortOwner $hp.LocalPort
-            $attemptedBy = "hyperd.exe"
-            $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-
-            # מניעת כפילויות
-            if (-not ($Global:PortConflictDetails.Port -contains $hp.LocalPort)) {
-
-                if ($ownerName -ne $attemptedBy) {
-                    $msg = "$time ⚠ פורט $($hp.LocalPort) תפוס ע״י $ownerName (מנסה: $attemptedBy, Extract: $($Global:RunningExtracts[-1].Extract))"
-                    Write-Host $msg -ForegroundColor Red
-                    Add-Content -Path $logFile -Value $msg -Encoding UTF8
-
-                    # סימון התנגשות בפרמטר גלובלי
-                    $Global:PortConflictDetected = $true
-                    $conflict = [PSCustomObject]@{
-                        Time        = $time
-                        Port        = $hp.LocalPort
-                        Owner       = $ownerName
-                        AttemptedBy = $attemptedBy
-                        Extract     = $Global:RunningExtracts[-1].Extract
-                    }
-                    $Global:PortConflictDetails += $conflict
-                }
-                else {
-                    $msg = "$time ✔ Hyper מאזין בהצלחה על פורט $($hp.LocalPort) (Extract: $($Global:RunningExtracts[-1].Extract))"
-                    Write-Host $msg -ForegroundColor Green
-                    Add-Content -Path $logFile -Value $msg -Encoding UTF8
-                }
-            }
+    # בדיקה ידנית לפני kill
+    $confirm = Read-Host "האם לשחרר את הפורט ע״י עצירת $ProcName (PID $PID)? (Y/N)"
+    if ($confirm -eq "Y" -or $confirm -eq "y") {
+        try {
+            Stop-Process -Id $PID -Force
+            Write-Host "✅ הפורט שוחרר בהצלחה"
+        } catch {
+            Write-Host "❌ נכשל בשחרור הפורט: $_"
         }
     }
     else {
-        $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ❌ Hyper לא רץ כרגע"
-        Write-Host $msg -ForegroundColor Yellow
-        Add-Content -Path $logFile -Value $msg -Encoding UTF8
+        Write-Host "הפורט לא שוחרר"
     }
 }
 
-# --- הפעלה לפי פרמטרים ---
-if ($Once) {
-    Run-Scan
-}
-elseif ($Loop) {
-    while ($true) {
-        Run-Scan
-        Start-Sleep -Seconds 5
-    }
-}
-else {
-    Write-Host "⚠ יש לבחור פרמטר: -Once או -Loop" -ForegroundColor Yellow
+# --- ריצה ראשית ---
+$result = Check-Port -Port $Port
+
+if ($Release -and $result) {
+    Release-Port -PID $result.PID -ProcName $result.ProcessName
 }

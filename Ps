@@ -13,7 +13,7 @@ function Get-RemoteLatestLog {
     try {
         $session = New-PSSession -ComputerName $Computer -ErrorAction Stop
     } catch {
-        Write-Host "❌ לא ניתן ליצור סשן לשרת $Computer: $_" -ForegroundColor Red
+        Write-Host "❌ לא ניתן ליצור סשן לשרת $Computer: $($_.Exception.Message)" -ForegroundColor Red
         return $null
     }
 
@@ -28,7 +28,7 @@ function Get-RemoteLatestLog {
             if ($log) { return $log.FullName } else { return $null }
         } -ArgumentList $Folder
     } catch {
-        Write-Host "❌ שגיאה בקריאת קבצים בשרת $Computer: $_" -ForegroundColor Red
+        Write-Host "❌ שגיאה בקריאת קבצים בשרת $Computer: $($_.Exception.Message)" -ForegroundColor Red
         Remove-PSSession $session
         return $null
     }
@@ -55,6 +55,7 @@ function Monitor-HyperRemote {
     # הפעלה במקביל עם Start-Job
     Start-Job -Name "Monitor_$Computer" -ScriptBlock {
         param($Computer, $LogPath, $OutputFile)
+
         $session = New-PSSession -ComputerName $Computer
         Invoke-Command -Session $session -ScriptBlock {
             param($FullPath)

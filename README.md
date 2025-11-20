@@ -1,34 +1,38 @@
-$excelPath = "C:\Users\AIG\Desktop\all\data\input.xlsx"
-$outPath   = "C:\Users\AIG\Desktop\all\data\output.txt"
-$column    = 1   # מספר העמודה (1 = A)
+$excelPath = "C:\data\input.xlsx"
+$outPath   = "C:\data\output.txt"
 
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
 $wb = $excel.Workbooks.Open($excelPath)
 $ws = $wb.Sheets.Item(1)
 
-$lines = @()
-$row = 1
+$rows = @()
 
-while ($ws.Cells.Item($row, $column).Value() -ne $null) {
+# כותרת קבועה
+$rows += "GarageId`tאחוז סופי"
 
-    $v = $ws.Cells.Item($row, $column).Value()
+$row = 2   # שורה אחרי הכותרת באקסל
 
-    # אם הערך בין 0 ל-1 -> כנראה אחוז, המרה ל-100
-    if ($v -is [double] -and $v -ge 0 -and $v -le 1) {
-        $v = $v * 100
+while ($ws.Cells.Item($row,1).Value() -ne $null) {
+
+    $id = $ws.Cells.Item($row,1).Value()
+    $pct = $ws.Cells.Item($row,2).Value()
+
+    # אם הערך הוא "86%" → "86"
+    if ($pct -is [string] -and $pct.Contains("%")) {
+        $pct = $pct.Replace("%","")
     }
 
-    # אם כתוב טקסט כמו "12%"
-    if ($v -is [string] -and $v.Contains("%")) {
-        $v = $v.Replace("%","")
+    # אם הערך הוא 0.86 → 86
+    if ($pct -is [double] -and $pct -ge 0 -and $pct -le 1) {
+        $pct = $pct * 100
     }
 
-    $lines += $v
+    $rows += "$id`t$pct"
     $row++
 }
 
-$lines | Out-File $outPath -Encoding UTF8
+$rows | Out-File $outPath -Encoding UTF8
 
 $wb.Close($false)
 $excel.Quit()

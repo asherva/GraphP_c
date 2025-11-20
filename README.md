@@ -11,21 +11,17 @@ $rows = @()
 # כותרת קבועה
 $rows += "GarageId`tאחוז סופי"
 
-$row = 2   # שורה אחרי הכותרת באקסל
+$row = 2
 
-while ($ws.Cells.Item($row,1).Value() -ne $null) {
+while ($ws.Cells.Item($row,1).Text -ne "") {
 
-    $id = $ws.Cells.Item($row,1).Value()
-    $pct = $ws.Cells.Item($row,2).Value()
+    # שולף בדיוק מה שרואים באקסל
+    $id  = $ws.Cells.Item($row,1).Text
+    $pct = $ws.Cells.Item($row,2).Text
 
-    # אם הערך הוא "86%" → "86"
-    if ($pct -is [string] -and $pct.Contains("%")) {
+    # המרת "86%" → "86"
+    if ($pct.Contains("%")) {
         $pct = $pct.Replace("%","")
-    }
-
-    # אם הערך הוא 0.86 → 86
-    if ($pct -is [double] -and $pct -ge 0 -and $pct -le 1) {
-        $pct = $pct * 100
     }
 
     $rows += "$id`t$pct"
